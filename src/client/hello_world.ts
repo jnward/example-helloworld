@@ -36,6 +36,7 @@ let payer: Keypair;
  * Hello world's program id
  */
 let programId: PublicKey;
+let programKeypair: Keypair;
 
 /**
  * The public key of the account we are saying hello to
@@ -61,14 +62,17 @@ const PROGRAM_SO_PATH = path.join(PROGRAM_PATH, 'helloworld.so');
  */
 const PROGRAM_KEYPAIR_PATH = path.join(PROGRAM_PATH, 'helloworld-keypair.json');
 
+const GREETED_PUBKEY_PATH = path.join(PROGRAM_PATH, 'helloworld-key.pub');
+const PROGRAM_ID_PATH = path.join(PROGRAM_PATH, 'program-id.pub');
+
 /**
  * The state of a greeting account managed by the hello world program
  */
 class GreetingAccount {
-  counter = 0;
-  constructor(fields: {counter: number} | undefined = undefined) {
+  message: Array<number> = [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0];
+  constructor(fields: {message: Array<number>} | undefined = undefined) {
     if (fields) {
-      this.counter = fields.counter;
+      this.message = fields.message;
     }
   }
 }
@@ -77,7 +81,7 @@ class GreetingAccount {
  * Borsh schema definition for greeting accounts
  */
 const GreetingSchema = new Map([
-  [GreetingAccount, {kind: 'struct', fields: [['counter', 'u32']]}],
+  [GreetingAccount, {kind: 'struct', fields: [['message', [16]]]}],
 ]);
 
 /**
@@ -146,7 +150,7 @@ export async function establishPayer(): Promise<void> {
 export async function checkProgram(): Promise<void> {
   // Read program id from keypair file
   try {
-    const programKeypair = await createKeypairFromFile(PROGRAM_KEYPAIR_PATH);
+    programKeypair = await createKeypairFromFile(PROGRAM_KEYPAIR_PATH);
     programId = programKeypair.publicKey;
   } catch (err) {
     const errMsg = (err as Error).message;
@@ -154,7 +158,7 @@ export async function checkProgram(): Promise<void> {
       `Failed to read program keypair at '${PROGRAM_KEYPAIR_PATH}' due to error: ${errMsg}. Program may need to be deployed with \`solana program deploy dist/program/helloworld.so\``,
     );
   }
-
+  console.log(`Got program ID: ${programId}`);
   // Check if the program has been deployed
   const programInfo = await connection.getAccountInfo(programId);
   if (programInfo === null) {
@@ -173,11 +177,14 @@ export async function checkProgram(): Promise<void> {
   // Derive the address (public key) of a greeting account from the program so that it's easy to find later.
   const GREETING_SEED = 'hello';
   greetedPubkey = await PublicKey.createWithSeed(
-    payer.publicKey,
+    programId,
     GREETING_SEED,
     programId,
   );
+  console.log(`Calculated greetedPubkey: ${greetedPubkey.toBase58()}`);
 
+  fs.writeFile(GREETED_PUBKEY_PATH, greetedPubkey.toBase58());
+  fs.writeFile(PROGRAM_ID_PATH, programId.toBase58());
   // Check if the greeting account has already been created
   const greetedAccount = await connection.getAccountInfo(greetedPubkey);
   if (greetedAccount === null) {
@@ -193,7 +200,7 @@ export async function checkProgram(): Promise<void> {
     const transaction = new Transaction().add(
       SystemProgram.createAccountWithSeed({
         fromPubkey: payer.publicKey,
-        basePubkey: payer.publicKey,
+        basePubkey: programId,
         seed: GREETING_SEED,
         newAccountPubkey: greetedPubkey,
         lamports,
@@ -201,8 +208,18 @@ export async function checkProgram(): Promise<void> {
         programId,
       }),
     );
-    await sendAndConfirmTransaction(connection, transaction, [payer]);
+    await sendAndConfirmTransaction(connection, transaction, [payer, programKeypair]);
   }
+}
+
+export async function getProgramPublicKey() {
+  const greeted_data = fs.readFileSync(GREETED_PUBKEY_PATH, 'utf8');
+  greetedPubkey = new PublicKey(greeted_data);
+  console.log('Using greeted public key', greeted_data);
+  const program_data = fs.readFileSync(PROGRAM_ID_PATH, 'utf8');
+  programId = new PublicKey(program_data);
+  console.log('Using program id', program_data);
+  //fetch(GREETED_PUBKEY_PATH).then(res => res.text()).then(pubkey => {greetedPubkey = new PublicKey(pubkey)});
 }
 
 /**
@@ -210,10 +227,11 @@ export async function checkProgram(): Promise<void> {
  */
 export async function sayHello(): Promise<void> {
   console.log('Saying hello to', greetedPubkey.toBase58());
+  const message = process.argv[2].substring(0,16);
   const instruction = new TransactionInstruction({
     keys: [{pubkey: greetedPubkey, isSigner: false, isWritable: true}],
     programId,
-    data: Buffer.alloc(0), // All instructions are hellos
+    data: Buffer.alloc(16, message, 'ascii'), // All instructions are hellos
   });
   await sendAndConfirmTransaction(
     connection,
@@ -237,8 +255,8 @@ export async function reportGreetings(): Promise<void> {
   );
   console.log(
     greetedPubkey.toBase58(),
-    'has been greeted',
-    greeting.counter,
-    'time(s)',
+    'would like you to know that',
+    String.fromCharCode.apply(null, greeting.message),
+    '!',
   );
 }

@@ -7,12 +7,13 @@ use solana_program::{
     program_error::ProgramError,
     pubkey::Pubkey,
 };
+use std::convert::TryInto;
 
 /// Define the type of state stored in accounts
 #[derive(BorshSerialize, BorshDeserialize, Debug)]
 pub struct GreetingAccount {
     /// number of greetings
-    pub counter: u32,
+    pub message: [u8; 16],
 }
 
 // Declare and export the program's entrypoint
@@ -22,7 +23,7 @@ entrypoint!(process_instruction);
 pub fn process_instruction(
     program_id: &Pubkey, // Public key of the account the hello world program was loaded into
     accounts: &[AccountInfo], // The account to say hello to
-    _instruction_data: &[u8], // Ignored, all helloworld instructions are hellos
+    instruction_data: &[u8], // Ignored, all helloworld instructions are hellos
 ) -> ProgramResult {
     msg!("Hello World Rust program entrypoint");
 
@@ -40,10 +41,14 @@ pub fn process_instruction(
 
     // Increment and store the number of times the account has been greeted
     let mut greeting_account = GreetingAccount::try_from_slice(&account.data.borrow())?;
-    greeting_account.counter += 1;
+    let new_message = instruction_data
+        .get(..16)
+        .and_then(|slice| slice.try_into().ok())
+        .ok_or(ProgramError::InvalidInstructionData)?;
+    greeting_account.message = new_message;
     greeting_account.serialize(&mut &mut account.data.borrow_mut()[..])?;
 
-    msg!("Greeted {} time(s)!", greeting_account.counter);
+    // msg!("Greeted {} time(s)!", greeting_account.message);
 
     Ok(())
 }
